@@ -19,6 +19,15 @@ public class CakePathFollower : MonoBehaviour
     public void MoveAndSpawnCakes(Vector3 targetPosition)
     {
         StopAllCoroutines();
+
+        // Reset eating state when interrupted — prevents isEating from getting stuck
+        VRGuideController gc = FindFirstObjectByType<VRGuideController>();
+        if (gc != null)
+        {
+            gc.isEating = false;
+            if (gc.animator != null) gc.animator.SetBool("IsEating", false);
+        }
+
         ClearCakes();
 
         NavMeshPath path = new NavMeshPath();
@@ -51,7 +60,7 @@ public class CakePathFollower : MonoBehaviour
 
         // add the final cake at the end position
         Vector3 finalPos = corners[corners.Length - 1];
-        finalPos.y = 0.05f;
+        finalPos.y = 0.5f;
         GameObject finalCake = Instantiate(cakePrefab, finalPos, Quaternion.identity);
         spawnedCakes.Add(finalCake);
     }
@@ -60,6 +69,14 @@ public class CakePathFollower : MonoBehaviour
     {
         VRGuideController guideController = FindFirstObjectByType<VRGuideController>();
         if (guideController != null) guideController.isEating = true;
+
+        // Use the animator from the guide controller if available, otherwise fallback to local
+        Animator currentAnimator = (guideController != null && guideController.animator != null) 
+            ? guideController.animator 
+            : animator;
+
+        // Set IsEating bool on the Animator so transitions that check it behave correctly
+        if (currentAnimator != null) currentAnimator.SetBool("IsEating", true);
 
         float originalStoppingDist = agent.stoppingDistance;
 
@@ -76,18 +93,26 @@ public class CakePathFollower : MonoBehaviour
             agent.SetDestination(cakePos);
             agent.isStopped = false;
 
-            // wait until reach the cake
+            // wait until reach the cake — update animator Speed to drive walking animation
             while (agent.pathPending || agent.remainingDistance > agent.stoppingDistance)
             {
+                if (currentAnimator != null)
+                {
+                    currentAnimator.SetFloat("Speed", agent.velocity.magnitude);
+                }
                 yield return null;
             }
 
             // stop and ready to eat
             agent.isStopped = true;
             agent.velocity = Vector3.zero; // avoid sliding
+            if (currentAnimator != null) currentAnimator.SetFloat("Speed", 0f);
             transform.LookAt(new Vector3(cakePos.x, transform.position.y, cakePos.z));
 
-            if (animator != null) animator.SetTrigger(eatAnimationTag);
+            // Use CrossFade to force the Eat state regardless of current animator state
+            // (SetTrigger only works if there's a transition from the CURRENT state using the trigger,
+            //  but the character may already be in Idle when this fires)
+            if (currentAnimator != null) currentAnimator.CrossFade("Eat", 0.25f);
 
             // time to eat
             yield return new WaitForSeconds(3.0f);
@@ -100,12 +125,9 @@ public class CakePathFollower : MonoBehaviour
                 Debug.Log("finsish the last cake, Arrive！");
 
                 // forced to Arrive state
-                if (animator != null)
+                if (currentAnimator != null)
                 {
-                    // Cut the Eat trigger first
-                    animator.ResetTrigger(eatAnimationTag);
-                    // change to Arrive state with 0.1s crossfade
-                    animator.CrossFade("Arrive", 0.1f);
+                    currentAnimator.CrossFade("Arrive", 0.1f);
                 }
 
                 // ensure the agent is fully stopped
@@ -113,12 +135,18 @@ public class CakePathFollower : MonoBehaviour
                 agent.velocity = Vector3.zero;
                 agent.ResetPath();
 
-                // exit eating in guide controller
+                // exit eating state
+                if (currentAnimator != null) currentAnimator.SetBool("IsEating", false);
                 if (guideController != null) guideController.isEating = false;
                 agent.stoppingDistance = originalStoppingDist; // reset stopping distance
                 yield break;
             }
         }
+
+        // Safety: reset eating state if loop ends without hitting the last-cake branch
+        if (currentAnimator != null) currentAnimator.SetBool("IsEating", false);
+        if (guideController != null) guideController.isEating = false;
+        agent.stoppingDistance = originalStoppingDist;
     }
 
     void ClearCakes()

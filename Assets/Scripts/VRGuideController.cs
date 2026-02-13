@@ -38,6 +38,8 @@ public class VRGuideController : MonoBehaviour
             animator.SetFloat("DistToTarget", distToTarget);
             // If eating cake, force IsGuideMode=false to prevent Arrive from triggering while eating
             animator.SetBool("IsGuideMode", isEating ? false : isGuideMode);
+            // Sync IsEating to the Animator so transitions that check it behave correctly
+            animator.SetBool("IsEating", isEating);
         }
 
         // 3. Intercept logic: if currently eating, skip the following guide and arrival cleanup logic
